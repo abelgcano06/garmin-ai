@@ -1,6 +1,8 @@
 # Datos privados y credenciales — NUNCA subir a GitHub
 data/
 db_config.json
+.env
+garmin_session.json
 *.log
 
 # Python
