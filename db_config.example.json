@@ -1,0 +1,3 @@
+{
+  "dsn": "postgresql://postgres:TU_PASSWORD@localhost:5432/apexgarmin"
+}

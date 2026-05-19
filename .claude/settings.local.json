@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/garmin-ai/*.py)",
+      "Bash(python /c/garmin-ai/data/check.py)",
+      "Bash(py --version)",
+      "Bash(py -c \"import json; d=json.load\\(open\\(''/c/garmin-ai/data/users/abelgcanofuentes_at_hotmail_com/sleep/2026-03-19/sleep_analysis.json''\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if ''battery'' in str\\(k\\).lower\\(\\) or ''recover'' in str\\(k\\).lower\\(\\) or ''score'' in str\\(k\\).lower\\(\\)}, indent=2\\)\\)\")",
+      "Bash(py -c \"import json; d=json.load\\(open\\(''c:/garmin-ai/data/users/abelgcanofuentes_at_hotmail_com/sleep/2026-03-19/sleep_analysis.json''\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if ''battery'' in str\\(k\\).lower\\(\\) or ''recover'' in str\\(k\\).lower\\(\\) or ''score'' in str\\(k\\).lower\\(\\)}, indent=2\\)\\)\")",
+      "Bash(py -c \"import json; d=json.load\\(open\\(''c:/garmin-ai/data/users/abelgcanofuentes_at_hotmail_com/sleep/2026-03-19/sleep_raw.json''\\)\\); print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(py -c \"import json; d=json.load\\(open\\(''c:/garmin-ai/data/users/abelgcanofuentes_at_hotmail_com/sleep/2026-03-19/sleep_raw.json''\\)\\); print\\(list\\(d[''calls''].keys\\(\\)\\)\\)\")",
+      "Bash(py -c \":*)"
+    ]
+  }
+}
