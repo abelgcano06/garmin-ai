@@ -393,6 +393,15 @@ def get_master_brief():
 
 @app.get("/api/profile")
 def get_profile():
+    user_id = get_db_user_id()
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_profile as db_get_profile
+            profile = db_get_profile(user_id)
+            if profile:
+                return profile
+        except Exception as e:
+            print(f"[DB] /api/profile fallback a JSON: {e}")
     user_dir = get_user_dir()
     path = os.path.join(user_dir, "profile.json")
     if not os.path.exists(path):
@@ -973,21 +982,55 @@ def get_history(section: str, days: int = 7):
 
 @app.get("/api/profile-full")
 def get_profile_full():
+    user_id  = get_db_user_id()
+    profile  = None
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_profile as db_get_profile
+            profile = db_get_profile(user_id)
+        except Exception as e:
+            print(f"[DB] /api/profile-full fallback a JSON: {e}")
     user_dir = get_user_dir()
+    if profile is None:
+        profile = read_json_opt(os.path.join(user_dir, "profile.json"))
     return {
-        "profile":  read_json_opt(os.path.join(user_dir, "profile.json")),
+        "profile":  profile,
         "baseline": read_json_opt(os.path.join(user_dir, "performance_intelligence", "athlete_baseline.json")),
     }
 
 
 @app.put("/api/profile")
 def update_profile(body: dict[str, Any] = Body(...)):
+    user_id  = get_db_user_id()
     user_dir = get_user_dir()
     path     = os.path.join(user_dir, "profile.json")
-    existing = read_json_opt(path) or {}
-    updated  = {**existing, **body, "user_id": existing.get("user_id"), "garmin_email": existing.get("garmin_email")}
+
+    # Leer existente (DB primero, luego archivo)
+    existing = None
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_profile as db_get_profile
+            existing = db_get_profile(user_id)
+        except Exception:
+            pass
+    if existing is None:
+        existing = read_json_opt(path) or {}
+
+    updated = {**existing, **body, "user_id": existing.get("user_id"), "garmin_email": existing.get("garmin_email")}
+
+    # Guardar en DB
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import upsert_profile
+            upsert_profile(user_id, updated)
+        except Exception as e:
+            print(f"[DB] Warning: no se pudo guardar perfil en PostgreSQL: {e}")
+
+    # Guardar también en archivo (respaldo)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(updated, f, indent=2, ensure_ascii=False)
+
     return {"ok": True, "profile": updated}
 
 

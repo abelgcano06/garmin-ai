@@ -72,6 +72,21 @@ def get_user_id(email: str) -> int | None:
         row = cur.fetchone()
         return row[0] if row else None
 
+def upsert_profile(user_id: int, profile: dict) -> None:
+    """Guarda el perfil completo del usuario en la columna profile_json."""
+    with db_cursor() as cur:
+        cur.execute("""
+            UPDATE users SET profile_json = %s, updated_at = NOW()
+            WHERE id = %s
+        """, (_json(profile), user_id))
+
+def get_profile(user_id: int) -> dict | None:
+    """Retorna el perfil del usuario desde la DB, o None si no existe."""
+    with db_cursor() as cur:
+        cur.execute("SELECT profile_json FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
 # ── Sleep ────────────────────────────────────────────────────
 
 def upsert_sleep(user_id: int, sleep_date: str,

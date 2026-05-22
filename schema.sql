@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   email        TEXT UNIQUE NOT NULL,
   email_key    TEXT UNIQUE NOT NULL,   -- abelgcanofuentes_at_hotmail_com
   display_name TEXT,
+  profile_json JSONB,                  -- perfil completo: peso, talla, FTP, edad, etc.
   created_at   TIMESTAMPTZ DEFAULT NOW(),
   updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
