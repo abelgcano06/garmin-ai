@@ -33,8 +33,8 @@ from auto_sync import sync_sleep, sync_day, sync_activities, sync_master
 from ftp_engine import run_ftp_engine
 from profile_intelligence import run_profile_intelligence
 
-STATUS_FILE = os.path.join(BASE_DIR, "data", "sync_status.json")
-SESSION_FILE = os.path.join(BASE_DIR, "data", "session.json")
+DEFAULT_STATUS_FILE = os.path.join(BASE_DIR, "data", "sync_status.json")
+DEFAULT_SESSION_FILE = os.path.join(BASE_DIR, "data", "session.json")
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -94,8 +94,20 @@ def main():
     parser.add_argument("--log-file", default=None, help="Redirigir stdout/stderr a este archivo")
     parser.add_argument("--sections", default="sleep,day,activities,master,ftp,profile",
                         help="Secciones a sincronizar separadas por coma")
+    parser.add_argument("--session-file", default=None, help="Ruta al archivo de credenciales del usuario")
+    parser.add_argument("--status-file", default=None, help="Ruta al archivo de estado de sincronización")
     args = parser.parse_args()
     sections = set(s.strip() for s in args.sections.split(","))
+
+    session_file = args.session_file or DEFAULT_SESSION_FILE
+    status_file = args.status_file or DEFAULT_STATUS_FILE
+
+    # Override write_status to use the correct status file for this user
+    global write_status
+    def write_status(data: dict):  # noqa: F811
+        os.makedirs(os.path.dirname(os.path.abspath(status_file)), exist_ok=True)
+        with open(status_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     # Redirect output to log file when launched from Next.js
     if args.log_file:
@@ -104,13 +116,13 @@ def main():
         sys.stderr = log_fh
 
     # 1) Leer credenciales
-    if not os.path.exists(SESSION_FILE):
+    if not os.path.exists(session_file):
         write_status({"status": "error", "message": "No hay sesión guardada. Inicia sesión primero."})
         print(json.dumps({"ok": False, "error": "No session file"}))
         sys.exit(1)
 
     try:
-        session = json.load(open(SESSION_FILE, encoding="utf-8"))
+        session = json.load(open(session_file, encoding="utf-8"))
     except Exception:
         write_status({"status": "error", "message": "No se pudo leer session.json."})
         print(json.dumps({"ok": False, "error": "Cannot read session"}))
@@ -173,9 +185,9 @@ def main():
     now_iso = datetime.now().isoformat()
     # Leer secciones previas del status para preservar timestamps
     prev_status = {}
-    if os.path.exists(STATUS_FILE):
+    if os.path.exists(status_file):
         try:
-            prev_status = json.load(open(STATUS_FILE, encoding="utf-8"))
+            prev_status = json.load(open(status_file, encoding="utf-8"))
         except Exception:
             pass
     section_ts = prev_status.get("sections", {})

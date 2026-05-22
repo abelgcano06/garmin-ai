@@ -11,6 +11,7 @@ Corre en http://localhost:7845
 Requiere que garmin_save_tokens.py haya sido ejecutado al menos una vez.
 """
 
+import contextvars
 import json
 import os
 from datetime import date, timedelta
@@ -37,9 +38,20 @@ TOKENSTORE = os.path.join(BASE_DIR, "data", "garth_tokens")
 SESSION_FILE = os.path.join(BASE_DIR, "garmin_session.json")
 DATA_DIR     = os.path.join(BASE_DIR, "data", "users")
 
+# Per-request user context — set by HTTP middleware from X-Apex-User / X-Apex-Email headers
+_current_user_key: contextvars.ContextVar[str] = contextvars.ContextVar("current_user_key", default="")
+_current_garmin_email: contextvars.ContextVar[str] = contextvars.ContextVar("current_garmin_email", default="")
+
 
 def get_user_dir() -> str:
-    """Retorna el directorio del usuario activo leyendo garmin_session.json"""
+    """Retorna el directorio del usuario activo. Usa header X-Apex-User si está presente."""
+    user_key = _current_user_key.get()
+    if user_key:
+        user_dir = os.path.join(DATA_DIR, user_key)
+        if not os.path.exists(user_dir):
+            raise HTTPException(status_code=404, detail=f"Usuario no encontrado: {user_key}")
+        return user_dir
+    # Legacy fallback: leer garmin_session.json
     if not os.path.exists(SESSION_FILE):
         raise HTTPException(status_code=503, detail="Sin sesión activa")
     with open(SESSION_FILE, encoding="utf-8") as f:
@@ -53,11 +65,15 @@ def get_user_dir() -> str:
 
 def get_db_user_id() -> int | None:
     """Retorna el user_id de PostgreSQL para la sesión activa, o None si no disponible."""
-    if not DB_AVAILABLE or not os.path.exists(SESSION_FILE):
+    if not DB_AVAILABLE:
         return None
     try:
-        with open(SESSION_FILE, encoding="utf-8") as f:
-            email = json.load(f).get("email", "").strip().lower()
+        email = _current_garmin_email.get()
+        if not email and os.path.exists(SESSION_FILE):
+            with open(SESSION_FILE, encoding="utf-8") as f:
+                email = json.load(f).get("email", "").strip().lower()
+        if not email:
+            return None
         conn = get_conn()
         try:
             with conn.cursor() as cur:
@@ -96,6 +112,20 @@ def resolve_path(rel_path: str) -> str:
 
 
 app = FastAPI(title="Apex Garmin Bridge", version="1.0.0")
+
+
+@app.middleware("http")
+async def user_context_middleware(request, call_next):
+    """Extrae X-Apex-User y X-Apex-Email de cada petición y los inyecta como contextvars."""
+    tok_key = _current_user_key.set(request.headers.get("X-Apex-User", "").strip())
+    tok_email = _current_garmin_email.set(request.headers.get("X-Apex-Email", "").strip().lower())
+    try:
+        response = await call_next(request)
+    finally:
+        _current_user_key.reset(tok_key)
+        _current_garmin_email.reset(tok_email)
+    return response
+
 
 # Allow calls from Next.js dev server
 app.add_middleware(
@@ -294,13 +324,54 @@ def delete_workout(workout_id: int):
 
 @app.get("/api/activities")
 def get_activities():
-    # activity_index.json es siempre la fuente de verdad — siempre está al corriente
+    user_id = get_db_user_id()
+    if user_id and DB_AVAILABLE:
+        try:
+            conn = get_conn()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT
+                            garmin_activity_id AS activity_id,
+                            name, activity_type AS type,
+                            start_date::text AS date,
+                            distance_km, elevation_m, moving_minutes, elapsed_minutes,
+                            calories, avg_hr, max_hr, avg_power,
+                            estimated_tss, garmin_tss, aerobic_te, anaerobic_te, vo2max,
+                            overall_score, score_label
+                        FROM activities
+                        WHERE user_id = %s
+                        ORDER BY start_date DESC
+                    """, (user_id,))
+                    rows = [dict(r) for r in cur.fetchall()]
+                    return {"activities": rows}
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[DB] /api/activities fallback a JSON: {e}")
     user_dir = get_user_dir()
     return read_json(os.path.join(user_dir, "activity_index.json"))
 
 
 @app.get("/api/activity/{activity_id}")
 def get_activity(activity_id: str):
+    user_id = get_db_user_id()
+    if user_id and DB_AVAILABLE:
+        try:
+            conn = get_conn()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT analysis_json FROM activities
+                        WHERE user_id = %s AND garmin_activity_id = %s
+                    """, (user_id, int(activity_id)))
+                    row = cur.fetchone()
+                    if row and row["analysis_json"]:
+                        return row["analysis_json"]
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[DB] /api/activity/{activity_id} fallback a JSON: {e}")
     user_dir = get_user_dir()
     path = os.path.join(user_dir, "activities", activity_id, "activity_analysis.json")
     return read_json(path)
@@ -356,67 +427,144 @@ def trigger_sync():
 @app.get("/api/home")
 def get_home():
     user_dir = get_user_dir()
-    today = date.today().isoformat()
     pi = os.path.join(user_dir, "performance_intelligence")
 
     master = read_json_opt(os.path.join(pi, "master_brief.json"))
     rh = read_json_opt(os.path.join(pi, "readiness_history.json")) or []
     last7 = rh[-7:] if isinstance(rh, list) else []
 
-    def latest_date(subdir: str, filename: str) -> str:
-        root = os.path.join(user_dir, subdir)
-        if not os.path.exists(root):
-            return today
-        available = sorted([e for e in os.listdir(root) if os.path.isfile(os.path.join(root, e, filename))])
-        return available[-1] if available else today
+    sleep_score   = None
+    day_score     = None
+    activity_info = None
 
-    sleep_date = today if os.path.exists(os.path.join(user_dir, "sleep", today, "sleep_analysis.json")) else latest_date("sleep", "sleep_analysis.json")
-    sleep = read_json_opt(os.path.join(user_dir, "sleep", sleep_date, "sleep_analysis.json"))
-    sleep_score = ((sleep or {}).get("recovery_summary") or {}).get("overall_recovery_score")
+    user_id = get_db_user_id()
+    if user_id and DB_AVAILABLE:
+        try:
+            conn = get_conn()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT overall_recovery_score FROM sleep_daily
+                        WHERE user_id = %s AND overall_recovery_score IS NOT NULL
+                        ORDER BY date DESC LIMIT 1
+                    """, (user_id,))
+                    row = cur.fetchone()
+                    if row:
+                        sleep_score = row["overall_recovery_score"]
 
-    day_date = today if os.path.exists(os.path.join(user_dir, "day", today, "day_analysis.json")) else latest_date("day", "day_analysis.json")
-    day = read_json_opt(os.path.join(user_dir, "day", day_date, "day_analysis.json"))
-    day_score = ((day or {}).get("recovery_summary") or {}).get("overall_day_state_score")
+                    cur.execute("""
+                        SELECT overall_day_state_score FROM day_daily
+                        WHERE user_id = %s AND overall_day_state_score IS NOT NULL
+                        ORDER BY date DESC LIMIT 1
+                    """, (user_id,))
+                    row = cur.fetchone()
+                    if row:
+                        day_score = row["overall_day_state_score"]
 
-    index_raw = read_json_opt(os.path.join(user_dir, "activity_index.json")) or {}
-    acts = sorted(index_raw.get("activities", []), key=lambda a: a.get("date", ""), reverse=True)
-    last = acts[0] if acts else None
-    activity_score = None
-    if last:
-        brief = read_json_opt(resolve_path(last.get("brief_file", "")))
-        if brief:
-            activity_score = ((brief.get("phase_1_quick_insight") or {}).get("overall_score") or {}).get("score")
+                    cur.execute("""
+                        SELECT garmin_activity_id AS activity_id, name, activity_type AS type,
+                               start_date::text AS date, overall_score, brief_json
+                        FROM activities WHERE user_id = %s
+                        ORDER BY start_date DESC LIMIT 1
+                    """, (user_id,))
+                    row = cur.fetchone()
+                    if row:
+                        brief_obj = row["brief_json"] or {}
+                        score = (
+                            ((brief_obj.get("phase_1_quick_insight") or {}).get("overall_score") or {}).get("score")
+                            or row["overall_score"]
+                        )
+                        activity_info = {"name": row["name"], "score": score, "date": row["date"], "type": row["type"]}
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[DB] /api/home fallback a JSON: {e}")
+
+    # Fallback a JSON para lo que no llegó de DB
+    if sleep_score is None or day_score is None or activity_info is None:
+        today = date.today().isoformat()
+        def latest_date(subdir: str, filename: str) -> str:
+            root = os.path.join(user_dir, subdir)
+            if not os.path.exists(root):
+                return today
+            available = sorted([e for e in os.listdir(root) if os.path.isfile(os.path.join(root, e, filename))])
+            return available[-1] if available else today
+
+        if sleep_score is None:
+            sleep_date = today if os.path.exists(os.path.join(user_dir, "sleep", today, "sleep_analysis.json")) else latest_date("sleep", "sleep_analysis.json")
+            sleep = read_json_opt(os.path.join(user_dir, "sleep", sleep_date, "sleep_analysis.json"))
+            sleep_score = ((sleep or {}).get("recovery_summary") or {}).get("overall_recovery_score")
+
+        if day_score is None:
+            day_date = today if os.path.exists(os.path.join(user_dir, "day", today, "day_analysis.json")) else latest_date("day", "day_analysis.json")
+            day = read_json_opt(os.path.join(user_dir, "day", day_date, "day_analysis.json"))
+            day_score = ((day or {}).get("recovery_summary") or {}).get("overall_day_state_score")
+
+        if activity_info is None:
+            index_raw = read_json_opt(os.path.join(user_dir, "activity_index.json")) or {}
+            acts = sorted(index_raw.get("activities", []), key=lambda a: a.get("date", ""), reverse=True)
+            last = acts[0] if acts else None
+            activity_score = None
+            if last:
+                brief = read_json_opt(resolve_path(last.get("brief_file", "")))
+                if brief:
+                    activity_score = ((brief.get("phase_1_quick_insight") or {}).get("overall_score") or {}).get("score")
+            activity_info = {"name": last.get("name"), "score": activity_score, "date": last.get("date"), "type": last.get("type")} if last else None
 
     return {
-        "master": {k: master.get(k) for k in ("readiness_score", "readiness_label", "recommendation", "risk_flags", "calendar_date")} if master else None,
+        "master":    {k: master.get(k) for k in ("readiness_score", "readiness_label", "recommendation", "risk_flags", "calendar_date")} if master else None,
         "history_7": last7,
-        "sleep_score": sleep_score,
-        "day_score": day_score,
-        "activity": {"name": last.get("name"), "score": activity_score, "date": last.get("date"), "type": last.get("type")} if last else None,
+        "sleep_score":  sleep_score,
+        "day_score":    day_score,
+        "activity":     activity_info,
     }
 
 
 @app.get("/api/activity/{activity_id}/full")
 def get_activity_full_bundle(activity_id: str):
+    user_id  = get_db_user_id()
+    analysis = None
+    brief    = None
+
+    if user_id and DB_AVAILABLE:
+        try:
+            conn = get_conn()
+            try:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT analysis_json, brief_json FROM activities
+                        WHERE user_id = %s AND garmin_activity_id = %s
+                    """, (user_id, int(activity_id)))
+                    row = cur.fetchone()
+                    if row:
+                        analysis = row["analysis_json"]
+                        brief    = row["brief_json"]
+            finally:
+                conn.close()
+        except Exception as e:
+            print(f"[DB] /api/activity/{activity_id}/full fallback a JSON: {e}")
+
     user_dir = get_user_dir()
-    index_raw = read_json_opt(os.path.join(user_dir, "activity_index.json")) or {}
-    activity = next((a for a in index_raw.get("activities", []) if str(a.get("activity_id")) == activity_id), None)
-    if not activity:
-        raise HTTPException(status_code=404, detail=f"Actividad {activity_id} no encontrada")
+    pi       = os.path.join(user_dir, "performance_intelligence")
 
-    analysis_path = resolve_path(activity.get("analysis_file", ""))
-    brief_path    = resolve_path(activity.get("brief_file", ""))
-    si_path       = analysis_path.replace("activity_analysis.json", "series_insights.json") if analysis_path else ""
-    pi            = os.path.join(user_dir, "performance_intelligence")
+    if analysis is None:
+        index_raw = read_json_opt(os.path.join(user_dir, "activity_index.json")) or {}
+        activity_meta = next((a for a in index_raw.get("activities", []) if str(a.get("activity_id")) == activity_id), None)
+        if not activity_meta:
+            raise HTTPException(status_code=404, detail=f"Actividad {activity_id} no encontrada")
+        analysis = read_json_opt(resolve_path(activity_meta.get("analysis_file", "")))
+        brief    = read_json_opt(resolve_path(activity_meta.get("brief_file", "")))
 
+    act_dir = os.path.join(user_dir, "activities", activity_id)
+    gs      = (analysis or {}).get("garmin_summary") or {}
     return {
-        "activity":        activity,
-        "brief":           read_json_opt(brief_path),
-        "analysis":        read_json_opt(analysis_path),
-        "series_insights": read_json_opt(si_path) if si_path else None,
-        "ftp_profile":     read_json_opt(os.path.join(pi, "ftp_profile.json")),
-        "athlete_baseline":read_json_opt(os.path.join(pi, "athlete_baseline.json")),
-        "profile":         read_json_opt(os.path.join(user_dir, "profile.json")),
+        "activity":         {"activity_id": activity_id, "name": gs.get("name"), "type": gs.get("type"), "date": (gs.get("start_date") or "")[:10]},
+        "brief":            brief,
+        "analysis":         analysis,
+        "series_insights":  read_json_opt(os.path.join(act_dir, "series_insights.json")),
+        "ftp_profile":      read_json_opt(os.path.join(pi, "ftp_profile.json")),
+        "athlete_baseline": read_json_opt(os.path.join(pi, "athlete_baseline.json")),
+        "profile":          read_json_opt(os.path.join(user_dir, "profile.json")),
     }
 
 
@@ -425,14 +573,8 @@ def get_activity_series_data(activity_id: str):
     import csv as _csv
     import io
 
-    user_dir  = get_user_dir()
-    index_raw = read_json_opt(os.path.join(user_dir, "activity_index.json")) or {}
-    activity  = next((a for a in index_raw.get("activities", []) if str(a.get("activity_id")) == activity_id), None)
-    if not activity:
-        raise HTTPException(status_code=404, detail=f"Actividad {activity_id} no encontrada")
-
-    analysis_path = resolve_path(activity.get("analysis_file", ""))
-    csv_path = os.path.join(os.path.dirname(analysis_path), "activity_series_clean.csv")
+    user_dir = get_user_dir()
+    csv_path = os.path.join(user_dir, "activities", activity_id, "activity_series_clean.csv")
     if not os.path.exists(csv_path):
         return {"series": [], "has_power": False, "has_cadence": False, "active_cadence_rpm": None, "pedaling_pct": None}
 
