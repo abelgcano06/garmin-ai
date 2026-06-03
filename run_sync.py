@@ -54,7 +54,7 @@ def calculate_days_back(user_id: str) -> int:
     """
     user_dir = get_user_root(user_id)
     acts_dir = os.path.join(user_dir, "activities")
-    days_back = 30  # default seguro
+    days_back = 90  # default para usuario nuevo sin actividades previas
 
     if os.path.exists(acts_dir):
         try:
