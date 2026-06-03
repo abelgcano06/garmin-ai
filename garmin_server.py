@@ -1041,6 +1041,16 @@ def update_profile(body: dict[str, Any] = Body(...)):
     user_dir = get_user_dir()
     path     = os.path.join(user_dir, "profile.json")
 
+    # Si no hay user_id en DB, crearlo ahora (onboarding antes del primer sync)
+    if not user_id and DB_AVAILABLE:
+        try:
+            from db import ensure_user
+            email = _current_garmin_email.get()
+            if email:
+                user_id = ensure_user(email)
+        except Exception:
+            pass
+
     # Leer existente (DB primero, luego archivo)
     existing = None
     if user_id and DB_AVAILABLE:
