@@ -320,8 +320,7 @@ def run_activity_full_flow(client, activity, user_id=None, run_ai=True, run_char
         email = get_current_garmin_email()
         if email:
             db_user_id = ensure_user(email)
-            analysis_data = pipeline_result.get("analysis") if pipeline_result else None
-            upsert_activity(db_user_id, analysis_data, brief)
+            upsert_activity(db_user_id, analysis_result, brief)
             print("[DB] activities actualizado en PostgreSQL")
     except Exception as db_err:
         print(f"[DB] Warning: no se pudo escribir en PostgreSQL: {db_err}")
