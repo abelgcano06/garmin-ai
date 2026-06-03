@@ -216,6 +216,19 @@ CREATE TABLE IF NOT EXISTS activities (
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ── INTELIGENCIA DEL USUARIO ────────────────────────────────
+CREATE TABLE IF NOT EXISTS user_intelligence (
+  id                     SERIAL PRIMARY KEY,
+  user_id                INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  master_brief_json      JSONB,   -- master_brief.json
+  readiness_history_json JSONB,   -- readiness_history.json (array)
+  correlations_json      JSONB,   -- performance_correlations.json
+  dynamic_weights_json   JSONB,   -- dynamic_weights.json
+  ftp_profile_json       JSONB,   -- ftp_estimate.json
+  athlete_baseline_json  JSONB,   -- athlete_baseline.json
+  updated_at             TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── ÍNDICES ──────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_sleep_user_date   ON sleep_daily(user_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_sleep_date        ON sleep_daily(date DESC);

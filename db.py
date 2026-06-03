@@ -87,6 +87,35 @@ def get_profile(user_id: int) -> dict | None:
         row = cur.fetchone()
         return row[0] if row else None
 
+# ── Inteligencia del usuario ─────────────────────────────────
+
+def upsert_intelligence(user_id: int, field: str, data: dict) -> None:
+    """Actualiza un campo JSONB en user_intelligence. field puede ser:
+    master_brief_json, readiness_history_json, correlations_json,
+    dynamic_weights_json, ftp_profile_json, athlete_baseline_json."""
+    with db_cursor() as cur:
+        cur.execute(f"""
+            INSERT INTO user_intelligence (user_id, {field}, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET {field} = EXCLUDED.{field}, updated_at = NOW()
+        """, (user_id, _json(data)))
+
+def get_intelligence(user_id: int) -> dict:
+    """Retorna todos los campos de user_intelligence para el usuario."""
+    with db_cursor() as cur:
+        cur.execute("""
+            SELECT master_brief_json, readiness_history_json, correlations_json,
+                   dynamic_weights_json, ftp_profile_json, athlete_baseline_json
+            FROM user_intelligence WHERE user_id = %s
+        """, (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return {}
+        keys = ["master_brief", "readiness_history", "correlations",
+                "dynamic_weights", "ftp_profile", "athlete_baseline"]
+        return {k: v for k, v in zip(keys, row) if v is not None}
+
 # ── Sleep ────────────────────────────────────────────────────
 
 def upsert_sleep(user_id: int, sleep_date: str,

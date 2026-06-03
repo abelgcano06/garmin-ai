@@ -917,6 +917,16 @@ def run_profile_intelligence(user_dir: str) -> dict:
     print(f"  Guardado en:     {output_path}")
     print(f"{'='*60}\n")
 
+    # Guardar en PostgreSQL
+    try:
+        from db import ensure_user, upsert_intelligence
+        from app_context import get_current_garmin_email
+        email = get_current_garmin_email()
+        db_uid = ensure_user(email)
+        upsert_intelligence(db_uid, "athlete_baseline_json", baseline)
+    except Exception as e:
+        print(f"[DB] Warning profile_intelligence: {e}")
+
     return baseline
 
 

@@ -932,6 +932,21 @@ def run_master_engine(user_dir, target_date=None):
     print(f"Outputs en: {output_dir}")
     print("=" * 50 + "\n")
 
+    # Guardar en PostgreSQL
+    try:
+        from db import ensure_user, upsert_intelligence
+        from app_context import get_current_garmin_email
+        email = get_current_garmin_email()
+        db_uid = ensure_user(email)
+        if brief:
+            upsert_intelligence(db_uid, "master_brief_json", brief)
+        upsert_intelligence(db_uid, "readiness_history_json", readiness_history)
+        upsert_intelligence(db_uid, "correlations_json", {"record_count": len(fusion_rows), "correlations": correlations})
+        upsert_intelligence(db_uid, "dynamic_weights_json", weights)
+        print("[DB] user_intelligence actualizado")
+    except Exception as e:
+        print(f"[DB] Warning master_engine: {e}")
+
     return {
         "fusion_rows":        fusion_rows,
         "correlations":       correlations,

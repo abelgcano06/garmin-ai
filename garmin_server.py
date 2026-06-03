@@ -386,9 +386,17 @@ def get_sleep(fecha: str):
 
 @app.get("/api/master-brief")
 def get_master_brief():
+    user_id = get_db_user_id()
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_intelligence
+            intel = get_intelligence(user_id)
+            if intel.get("master_brief"):
+                return intel["master_brief"]
+        except Exception as e:
+            print(f"[DB] /api/master-brief fallback a JSON: {e}")
     user_dir = get_user_dir()
-    path = os.path.join(user_dir, "performance_intelligence", "master_brief.json")
-    return read_json(path)
+    return read_json(os.path.join(user_dir, "performance_intelligence", "master_brief.json"))
 
 
 @app.get("/api/profile")
@@ -438,8 +446,15 @@ def get_home():
     user_dir = get_user_dir()
     pi = os.path.join(user_dir, "performance_intelligence")
 
-    master = read_json_opt(os.path.join(pi, "master_brief.json"))
-    rh = read_json_opt(os.path.join(pi, "readiness_history.json")) or []
+    intel = {}
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_intelligence
+            intel = get_intelligence(user_id)
+        except Exception:
+            pass
+    master = intel.get("master_brief") or read_json_opt(os.path.join(pi, "master_brief.json"))
+    rh = intel.get("readiness_history") or read_json_opt(os.path.join(pi, "readiness_history.json")) or []
     last7 = rh[-7:] if isinstance(rh, list) else []
 
     sleep_score   = None
@@ -566,14 +581,26 @@ def get_activity_full_bundle(activity_id: str):
 
     act_dir = os.path.join(user_dir, "activities", activity_id)
     gs      = (analysis or {}).get("garmin_summary") or {}
+
+    intel = {}
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_intelligence, get_profile as db_get_profile
+            intel   = get_intelligence(user_id)
+            profile = db_get_profile(user_id)
+        except Exception:
+            profile = None
+    else:
+        profile = None
+
     return {
         "activity":         {"activity_id": activity_id, "name": gs.get("name"), "type": gs.get("type"), "date": (gs.get("start_date") or "")[:10]},
         "brief":            brief,
         "analysis":         analysis,
         "series_insights":  read_json_opt(os.path.join(act_dir, "series_insights.json")),
-        "ftp_profile":      read_json_opt(os.path.join(pi, "ftp_profile.json")),
-        "athlete_baseline": read_json_opt(os.path.join(pi, "athlete_baseline.json")),
-        "profile":          read_json_opt(os.path.join(user_dir, "profile.json")),
+        "ftp_profile":      intel.get("ftp_profile")      or read_json_opt(os.path.join(pi, "ftp_profile.json")),
+        "athlete_baseline": intel.get("athlete_baseline") or read_json_opt(os.path.join(pi, "athlete_baseline.json")),
+        "profile":          profile or read_json_opt(os.path.join(user_dir, "profile.json")),
     }
 
 
@@ -633,15 +660,24 @@ def get_activity_series_data(activity_id: str):
 
 @app.get("/api/master")
 def get_master():
+    user_id = get_db_user_id()
+    intel = {}
+    if user_id and DB_AVAILABLE:
+        try:
+            from db import get_intelligence
+            intel = get_intelligence(user_id)
+        except Exception as e:
+            print(f"[DB] /api/master fallback a JSON: {e}")
+
     user_dir = get_user_dir()
     pi = os.path.join(user_dir, "performance_intelligence")
-    rh = read_json_opt(os.path.join(pi, "readiness_history.json")) or []
+    rh = intel.get("readiness_history") or read_json_opt(os.path.join(pi, "readiness_history.json")) or []
     return {
-        "master":          read_json_opt(os.path.join(pi, "master_brief.json")),
+        "master":          intel.get("master_brief")     or read_json_opt(os.path.join(pi, "master_brief.json")),
         "history_30":      rh[-30:] if isinstance(rh, list) else [],
-        "correlations":    read_json_opt(os.path.join(pi, "performance_correlations.json")),
-        "dynamic_weights": read_json_opt(os.path.join(pi, "dynamic_weights.json")),
-        "ftp_profile":     read_json_opt(os.path.join(pi, "ftp_profile.json")),
+        "correlations":    intel.get("correlations")     or read_json_opt(os.path.join(pi, "performance_correlations.json")),
+        "dynamic_weights": intel.get("dynamic_weights")  or read_json_opt(os.path.join(pi, "dynamic_weights.json")),
+        "ftp_profile":     intel.get("ftp_profile")      or read_json_opt(os.path.join(pi, "ftp_profile.json")),
     }
 
 

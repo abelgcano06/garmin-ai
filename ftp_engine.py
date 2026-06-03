@@ -283,6 +283,18 @@ def run_ftp_engine(user_dir: str):
     result["ftp_previous"] = prev_ftp_apex
     result["ftp_improved"] = new_ftp is not None and new_ftp > prev_ftp_apex
 
+    # Guardar en PostgreSQL
+    try:
+        from db import ensure_user, upsert_intelligence, upsert_profile
+        from app_context import get_current_garmin_email
+        email = get_current_garmin_email()
+        db_uid = ensure_user(email)
+        upsert_intelligence(db_uid, "ftp_profile_json", result)
+        if new_ftp:
+            upsert_profile(db_uid, profile)
+    except Exception as e:
+        print(f"[DB] Warning ftp_engine: {e}")
+
     return result
 
 
