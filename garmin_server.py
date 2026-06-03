@@ -1037,21 +1037,18 @@ def get_profile_full():
 
 @app.put("/api/profile")
 def update_profile(body: dict[str, Any] = Body(...)):
-    user_id  = get_db_user_id()
-    user_dir = get_user_dir()
-    path     = os.path.join(user_dir, "profile.json")
+    user_id = get_db_user_id()
+    email   = _current_garmin_email.get()
 
-    # Si no hay user_id en DB, crearlo ahora (onboarding antes del primer sync)
-    if not user_id and DB_AVAILABLE:
+    # Crear usuario en DB si no existe (onboarding antes del primer sync)
+    if not user_id and DB_AVAILABLE and email:
         try:
             from db import ensure_user
-            email = _current_garmin_email.get()
-            if email:
-                user_id = ensure_user(email)
+            user_id = ensure_user(email)
         except Exception:
             pass
 
-    # Leer existente (DB primero, luego archivo)
+    # Leer existente desde DB
     existing = None
     if user_id and DB_AVAILABLE:
         try:
@@ -1059,12 +1056,18 @@ def update_profile(body: dict[str, Any] = Body(...)):
             existing = db_get_profile(user_id)
         except Exception:
             pass
+
+    # Fallback a archivo si el directorio ya existe
     if existing is None:
-        existing = read_json_opt(path) or {}
+        try:
+            user_dir = get_user_dir()
+            existing = read_json_opt(os.path.join(user_dir, "profile.json")) or {}
+        except Exception:
+            existing = {}
 
-    updated = {**existing, **body, "user_id": existing.get("user_id"), "garmin_email": existing.get("garmin_email")}
+    updated = {**existing, **body}
 
-    # Guardar en DB
+    # Guardar en DB (fuente de verdad)
     if user_id and DB_AVAILABLE:
         try:
             from db import upsert_profile
@@ -1072,10 +1075,15 @@ def update_profile(body: dict[str, Any] = Body(...)):
         except Exception as e:
             print(f"[DB] Warning: no se pudo guardar perfil en PostgreSQL: {e}")
 
-    # Guardar también en archivo (respaldo)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(updated, f, indent=2, ensure_ascii=False)
+    # Guardar en archivo si el directorio existe
+    try:
+        user_dir = get_user_dir()
+        file_path = os.path.join(user_dir, "profile.json")
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(updated, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
     return {"ok": True, "profile": updated}
 
