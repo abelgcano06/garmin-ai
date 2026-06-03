@@ -47,41 +47,37 @@ def write_status(data: dict):
 
 def calculate_days_back(user_id: str) -> int:
     """
-    Calcula cuántos días buscar en Garmin para no perder ninguna actividad.
-    Busca la fecha de la última actividad YA ANALIZADA (con analysis.json).
-    Si hay un gap grande (usuario no abrió la app en días), lo cubre completo.
+    Calcula cuántos días buscar en Garmin.
+    Fuente de verdad: PostgreSQL. Si no hay actividades en DB, usa 90 días.
     Mínimo 14, máximo 90.
     """
-    user_dir = get_user_root(user_id)
-    acts_dir = os.path.join(user_dir, "activities")
-    days_back = 90  # default para usuario nuevo sin actividades previas
+    days_back = 90  # default para usuario nuevo
 
-    if os.path.exists(acts_dir):
+    try:
+        from db import get_conn, ensure_user
+        from app_context import get_current_garmin_email
+        email = get_current_garmin_email()
+        db_uid = ensure_user(email)
+        conn = get_conn()
         try:
-            # Busca la fecha más reciente con analysis.json (no solo indexed)
-            latest = None
-            for act_id in os.listdir(acts_dir):
-                analysis = os.path.join(acts_dir, act_id, "activity_analysis.json")
-                if not os.path.exists(analysis):
-                    continue
-                try:
-                    raw = json.load(open(analysis, encoding="utf-8"))
-                    d = (raw.get("garmin_summary") or {}).get("start_date", "")[:10]
-                    if d and (latest is None or d > latest):
-                        latest = d
-                except Exception:
-                    continue
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT MAX(start_date)::text FROM activities WHERE user_id = %s
+                """, (db_uid,))
+                row = cur.fetchone()
+                latest = row[0] if row and row[0] else None
+        finally:
+            conn.close()
 
-            if latest:
-                last_dt = datetime.strptime(latest, "%Y-%m-%d").date()
-                days_since = (date.today() - last_dt).days
-                # Siempre cubre desde la última actividad + 2 días de margen
-                days_back = max(14, min(days_since + 2, 90))
-                print(f"  [sync]  Última actividad analizada: {latest} ({days_since} días) -> buscando {days_back} días")
-            else:
-                print(f"  [sync]  Sin actividades previas -> buscando {days_back} días")
-        except Exception as e:
-            print(f"  [sync]  Error calculando days_back: {e}")
+        if latest:
+            last_dt = datetime.strptime(latest, "%Y-%m-%d").date()
+            days_since = (date.today() - last_dt).days
+            days_back = max(14, min(days_since + 2, 90))
+            print(f"  [sync]  Última actividad en DB: {latest} ({days_since} días) -> buscando {days_back} días")
+        else:
+            print(f"  [sync]  Sin actividades en DB -> buscando {days_back} días")
+    except Exception as e:
+        print(f"  [sync]  Error calculando days_back: {e} -> usando {days_back} días")
 
     return days_back
 
