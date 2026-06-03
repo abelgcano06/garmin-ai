@@ -13,6 +13,7 @@ Qué hace:
 El usuario nunca ve esto — solo ve "Sincronizando..." y listo.
 """
 
+import json
 import os
 from datetime import date, timedelta
 
@@ -240,12 +241,46 @@ def sync_activities(client, user_id, days_back=7, verbose=True):
     new_count = 0
     skip_count = 0
 
+    # IDs ya en PostgreSQL para este usuario
+    db_activity_ids = set()
+    try:
+        from db import get_conn, ensure_user
+        from app_context import get_current_garmin_email
+        email = get_current_garmin_email()
+        db_uid = ensure_user(email)
+        conn = get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT garmin_activity_id FROM activities WHERE user_id = %s", (db_uid,))
+                db_activity_ids = {str(r[0]) for r in cur.fetchall()}
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
     for activity in activities:
         activity_id = activity.get("activityId")
         analysis_path = get_activity_analysis_path(activity_id, user_id)
+        already_in_db = str(activity_id) in db_activity_ids
 
         if os.path.exists(analysis_path):
-            skip_count += 1
+            # JSON existe — si ya está en DB, saltar; si no, escribir a DB
+            if already_in_db:
+                skip_count += 1
+                continue
+            # Está en disco pero no en DB — upsert sin reprocesar
+            try:
+                analysis = json.load(open(analysis_path, encoding="utf-8"))
+                brief_path = analysis_path.replace("activity_analysis.json", "activity_brief.json")
+                brief = json.load(open(brief_path, encoding="utf-8")) if os.path.exists(brief_path) else None
+                from db import upsert_activity
+                upsert_activity(db_uid, analysis, brief)
+                skip_count += 1
+                if verbose:
+                    print(f"  [acts]  DB sync: {activity.get('activityName', activity_id)}")
+            except Exception as e:
+                if verbose:
+                    print(f"  [acts]  DB sync ERROR {activity_id}: {e}")
             continue
 
         name = activity.get("activityName", "Sin nombre")
