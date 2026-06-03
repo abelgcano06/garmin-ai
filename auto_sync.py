@@ -299,6 +299,35 @@ def sync_activities(client, user_id, days_back=7, verbose=True):
     if verbose:
         print(f"  [acts]  {new_count} nuevas procesadas, {skip_count} ya existían")
 
+    # Siempre sincronizar JSON en disco → DB (cubre actividades fuera del rango de Garmin)
+    try:
+        from db import upsert_activity
+        user_dir = get_user_root(user_id)
+        acts_dir = os.path.join(user_dir, "activities")
+        if os.path.exists(acts_dir):
+            synced = 0
+            for act_folder in os.listdir(acts_dir):
+                act_id = act_folder
+                if str(act_id) in db_activity_ids:
+                    continue
+                analysis_path = os.path.join(acts_dir, act_folder, "activity_analysis.json")
+                if not os.path.exists(analysis_path):
+                    continue
+                try:
+                    analysis = json.load(open(analysis_path, encoding="utf-8"))
+                    brief_path = os.path.join(acts_dir, act_folder, "activity_brief.json")
+                    brief = json.load(open(brief_path, encoding="utf-8")) if os.path.exists(brief_path) else None
+                    upsert_activity(db_uid, analysis, brief)
+                    synced += 1
+                except Exception as e:
+                    if verbose:
+                        print(f"  [acts]  DB backfill ERROR {act_folder}: {e}")
+            if synced and verbose:
+                print(f"  [acts]  {synced} actividades sincronizadas a PostgreSQL desde disco")
+    except Exception as e:
+        if verbose:
+            print(f"  [acts]  DB backfill WARNING: {e}")
+
     return results
 
 
