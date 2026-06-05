@@ -164,9 +164,17 @@ def run_activity_pipeline(client, activity, user_id=None):
     # Cargar perfil del usuario para FTP y MAX_HR reales
     # ftp_apex = calculado por Apex (preferido); ftp = manual del usuario (fallback)
     profile = load_user_profile(user_id)
-    ftp = float(profile.get("ftp_apex") or profile.get("ftp") or 230.0)
-    max_hr = float(profile.get("max_hr") or 185.0)
-    print(f"[perfil] FTP={ftp}W (apex={profile.get('ftp_apex')}, manual={profile.get('ftp')})  MAX_HR={max_hr}bpm")
+    ftp_real = profile.get("ftp_apex") or profile.get("ftp")
+    max_hr_real = profile.get("max_hr")
+    ftp = float(ftp_real or 230.0)
+    max_hr = float(max_hr_real or 185.0)
+    ftp_is_default = ftp_real is None
+    max_hr_is_default = max_hr_real is None
+    if ftp_is_default:
+        print(f"[perfil] AVISO: FTP no configurado, usando default 230W — métricas de potencia son estimadas")
+    if max_hr_is_default:
+        print(f"[perfil] AVISO: FC máxima no configurada, usando default 185bpm — zonas de FC son estimadas")
+    print(f"[perfil] FTP={ftp}W (default={ftp_is_default})  MAX_HR={max_hr}bpm (default={max_hr_is_default})")
 
     details_path, details = download_activity_details(client, activity_id, user_id)
     series_path = build_activity_series_csv(details, activity_id, user_id)
@@ -180,6 +188,13 @@ def run_activity_pipeline(client, activity, user_id=None):
         print(f"{k}: {v}")
 
     analysis_result = analyze_activity(activity, series_path, ftp=ftp, max_hr=max_hr)
+    # Marcar si las métricas de potencia/FC se calcularon con valores por defecto
+    if "data_quality" not in analysis_result:
+        analysis_result["data_quality"] = {}
+    analysis_result["data_quality"]["ftp_is_default"] = ftp_is_default
+    analysis_result["data_quality"]["max_hr_is_default"] = max_hr_is_default
+    analysis_result["data_quality"]["ftp_used"] = ftp
+    analysis_result["data_quality"]["max_hr_used"] = max_hr
 
     analysis_json_path = save_analysis_json(activity_id, analysis_result, user_id)
 

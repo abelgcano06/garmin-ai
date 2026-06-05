@@ -671,8 +671,9 @@ def compute_analysis(raw_dump, series, user_dir=None, baselines=None):
     avg_sleep_stress = float(dto.get("avgSleepStress", mean(stress_values)) or 0.0)
     stress_load_score = score_stress(avg_sleep_stress)
     stress_stability_index = clamp(100.0 - stddev(stress_values) * 4.0, 0.0, 100.0)
+    # Alto = sistema simpático activo (estrés alto + FC inestable)
     sympathetic_activation_score = clamp(
-        100.0 - (0.6 * stress_load_score + 0.4 * hr_stability_index),
+        0.6 * (100.0 - stress_load_score) + 0.4 * (100.0 - hr_stability_index),
         0.0, 100.0
     )
 
@@ -1115,6 +1116,15 @@ def _fmt_hhmm(ts_str):
     return dt.strftime("%H:%M")
 
 
+def _ev_unpack(p):
+    """Desempaca un punto de serie — acepta dict {ts, value} o list/tuple [ts, val]."""
+    if isinstance(p, dict):
+        return p.get("ts"), p.get("value")
+    if isinstance(p, (list, tuple)) and len(p) >= 2:
+        return p[0], p[1]
+    return None, None
+
+
 def extract_notable_events(series: dict) -> list:
     """
     Scan raw time-series data and extract the most physiologically
@@ -1137,22 +1147,19 @@ def extract_notable_events(series: dict) -> list:
     spo2_series = series.get("spo2", [])
     i = 0
     while i < len(spo2_series):
-        pair = spo2_series[i]
-        ts, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (None, None)
+        ts, val = _ev_unpack(spo2_series[i])
         if val is not None and float(val) < 93:
             nadir = float(val)
             nadir_ts = ts
             j = i
             while j < len(spo2_series):
-                p = spo2_series[j]
-                v = p[1] if isinstance(p, (list, tuple)) else None
+                p_ts, v = _ev_unpack(spo2_series[j])
                 if v is None or float(v) >= 94:
                     break
                 if float(v) < nadir:
                     nadir = float(v)
-                    nadir_ts = p[0] if isinstance(p, (list, tuple)) else ts
+                    nadir_ts = p_ts or ts
                 j += 1
-            # approximate duration: each sample ~1-2 min
             duration_min = max(1, (j - i) * 2)
             severity = "high" if nadir < 88 else "medium"
             events.append({
@@ -1170,11 +1177,8 @@ def extract_notable_events(series: dict) -> list:
     # ── HRV sharp drops ───────────────────────────────────────────────────────
     hrv_series = series.get("hrv", [])
     for idx in range(2, len(hrv_series)):
-        prev_p = hrv_series[idx - 2]
-        cur_p  = hrv_series[idx]
-        prev_v = prev_p[1] if isinstance(prev_p, (list, tuple)) else None
-        cur_v  = cur_p[1]  if isinstance(cur_p,  (list, tuple)) else None
-        cur_ts = cur_p[0]  if isinstance(cur_p,  (list, tuple)) else None
+        _, prev_v = _ev_unpack(hrv_series[idx - 2])
+        cur_ts, cur_v = _ev_unpack(hrv_series[idx])
         if prev_v and cur_v:
             drop = float(prev_v) - float(cur_v)
             if drop >= 12:
@@ -1193,7 +1197,7 @@ def extract_notable_events(series: dict) -> list:
     spike_start_ts = None
     spike_peak = 0
     for pair in stress_series:
-        ts, val = (pair[0], pair[1]) if isinstance(pair, (list, tuple)) else (None, None)
+        ts, val = _ev_unpack(pair)
         if val is None:
             continue
         fval = float(val)
@@ -1219,19 +1223,19 @@ def extract_notable_events(series: dict) -> list:
     hr_series = series.get("heart_rate", [])
     window = 5
     for idx in range(window, len(hr_series) - window):
-        cur_p  = hr_series[idx]
-        cur_v  = cur_p[1] if isinstance(cur_p, (list, tuple)) else None
-        cur_ts = cur_p[0] if isinstance(cur_p, (list, tuple)) else None
+        cur_ts, cur_v = _ev_unpack(hr_series[idx])
         if cur_v is None:
             continue
-        neighbors = [
-            hr_series[k][1]
-            for k in range(idx - window, idx + window + 1)
-            if k != idx and isinstance(hr_series[k], (list, tuple)) and hr_series[k][1] is not None
-        ]
+        neighbors = []
+        for k in range(idx - window, idx + window + 1):
+            if k == idx:
+                continue
+            _, nv = _ev_unpack(hr_series[k])
+            if nv is not None:
+                neighbors.append(float(nv))
         if not neighbors:
             continue
-        local_mean = sum(float(v) for v in neighbors) / len(neighbors)
+        local_mean = sum(neighbors) / len(neighbors)
         if float(cur_v) - local_mean >= 14:
             events.append({
                 "time": _fmt_hhmm(cur_ts),

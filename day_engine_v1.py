@@ -520,8 +520,8 @@ def compute_atl_ctl_tsb(user_dir, calendar_date):
         atl += tss * weight_atl
         ctl += tss * weight_ctl
 
-    # Normalizar — ATL ventana 7 días efectivos, CTL ventana 42 días efectivos
-    atl_norm = sum(ATL_DECAY ** i for i in range(1, 8))
+    # Normalizar sobre los mismos 42 días acumulados (ATL tiene más peso en primeros 7)
+    atl_norm = sum(ATL_DECAY ** i for i in range(1, 43))
     ctl_norm = sum(CTL_DECAY ** i for i in range(1, 43))
     atl = atl / atl_norm if atl_norm > 0 else 0.0
     ctl = ctl / ctl_norm if ctl_norm > 0 else 0.0
@@ -963,7 +963,8 @@ def compute_day_analysis(raw_dump, series, user_dir=None, baselines=None):
                 if delta > max_relief:
                     max_relief = delta
 
-    downshift_ratio = pct(downshift_count, max(1, stress_spike_count + high_stress_count))
+    _downshift_denom = stress_spike_count + high_stress_count
+    downshift_ratio = pct(downshift_count, _downshift_denom) if _downshift_denom > 0 else 0.0
 
     # Scores con baselines personalizados
     nervous_score = score_nervous_system_load(avg_stress, hr_std, avg_hrv, baselines=baselines)

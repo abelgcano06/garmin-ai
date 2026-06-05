@@ -346,6 +346,7 @@ def best_window_by_real_time(rows, duration_s):
 
         power_vals = []
         hr_vals = []
+        last_j = i
 
         for j in range(i, n):
             current_time = rows[j]["elapsed_s"]
@@ -353,34 +354,38 @@ def best_window_by_real_time(rows, duration_s):
                 continue
 
             elapsed = current_time - start_time
+            # Solo incluir muestras dentro del window exacto
+            if elapsed > duration_s:
+                break
 
             p = rows[j]["power_w"]
             h = rows[j]["heart_rate_bpm"]
-
             if p is not None:
                 power_vals.append(p)
             if h is not None:
                 hr_vals.append(h)
+            last_j = j
 
             if elapsed >= duration_s:
-                if not power_vals:
-                    break
-
-                avg_power = sum(power_vals) / len(power_vals)
-                avg_hr = mean(hr_vals) if hr_vals else None
-
-                candidate = {
-                    "start_idx": i,
-                    "end_idx": j,
-                    "avg_power": avg_power,
-                    "avg_hr": avg_hr,
-                    "real_duration_s": elapsed,
-                }
-
-                if best is None or candidate["avg_power"] > best["avg_power"]:
-                    best = candidate
-
                 break
+
+        actual_elapsed = (rows[last_j]["elapsed_s"] or 0) - start_time
+        if actual_elapsed < duration_s * 0.9:
+            continue  # ventana incompleta (< 90% de la duración pedida)
+        if not power_vals:
+            continue
+
+        avg_power = sum(power_vals) / len(power_vals)
+        avg_hr = mean(hr_vals) if hr_vals else None
+        candidate = {
+            "start_idx": i,
+            "end_idx": last_j,
+            "avg_power": avg_power,
+            "avg_hr": avg_hr,
+            "real_duration_s": actual_elapsed,
+        }
+        if best is None or candidate["avg_power"] > best["avg_power"]:
+            best = candidate
 
     return best
 

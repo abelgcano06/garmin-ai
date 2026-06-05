@@ -5,6 +5,20 @@
 -- todo el detalle rico. Nunca se pierde información.
 -- ============================================================
 
+-- ── CUENTAS MY APEX ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS apex_accounts (
+  id                   SERIAL PRIMARY KEY,
+  user_id              TEXT UNIQUE NOT NULL,
+  email                TEXT UNIQUE NOT NULL,
+  name                 TEXT NOT NULL,
+  password_hash        TEXT NOT NULL,
+  password_salt        TEXT NOT NULL,
+  garmin_email         TEXT,
+  garmin_password      TEXT,
+  onboarding_completed BOOLEAN DEFAULT FALSE,
+  created_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── USUARIOS ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
   id           SERIAL PRIMARY KEY,

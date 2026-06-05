@@ -276,14 +276,14 @@ def sync_master(user_id, verbose=True):
     Corre el master engine con todos los datos actualizados.
     Calcula readiness, correlaciones y pesos dinámicos.
     """
-    user_dir  = get_user_root(user_id)
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    user_dir = get_user_root(user_id)
+    today    = date.today().isoformat()
 
     if verbose:
         print(f"  [master] Calculando readiness y correlaciones...")
 
     try:
-        result = run_master_engine(user_dir, target_date=yesterday)
+        result = run_master_engine(user_dir, target_date=today)
         if verbose and result:
             brief = result.get("master_brief")
             if brief:
