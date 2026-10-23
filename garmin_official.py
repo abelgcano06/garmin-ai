@@ -38,6 +38,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import time
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -184,6 +185,8 @@ class ApexGarminClient:
         self._auth = PersonalApiAuthenticator(timeout=timeout, bearer_token_cache_file=cache)
         self._timeout = timeout
         self._client: GarminPersonalApiClient | None = None
+        self._memo: dict = {}
+        self.request_stats = {"reintentos": 0, "errores": 0}
 
     @classmethod
     def for_user(cls, user_id: str, **kw) -> "ApexGarminClient":
@@ -206,15 +209,53 @@ class ApexGarminClient:
             self._client = GarminPersonalApiClient(self._token(), timeout=self._timeout)
         return self._client
 
+    RETRY_WAITS = (3, 10, 30, 60)   # segundos; Garmin limita ráfagas de peticiones (429)
+
     def _call(self, fn):
-        """Ejecuta fn(client); si el bearer fue revocado (401) lo renueva y reintenta una vez."""
-        try:
-            return fn(self._api())
-        except HttpError as exc:
-            if exc.status_code != UNAUTHORIZED:
+        """
+        Ejecuta fn(client).
+        - 401: renueva el bearer token una vez.
+        - 429 / 5xx / errores de red: reintenta con espera creciente (respeta Retry-After).
+        Además espacia las peticiones ~0.35 s para no disparar el límite de Garmin en syncs largos.
+        """
+        refreshed = False
+        for attempt in range(len(self.RETRY_WAITS) + 1):
+            gap = time.monotonic() - getattr(self, "_last_req", 0.0)
+            if gap < 0.35:
+                time.sleep(0.35 - gap)
+            self._last_req = time.monotonic()
+            try:
+                return fn(self._api())
+            except HttpError as exc:
+                code = exc.status_code
+                if code == UNAUTHORIZED and not refreshed:
+                    self._api().update_bearer_token(self._token(force=True))
+                    refreshed = True
+                    continue
+                if (code == 429 or code >= 500) and attempt < len(self.RETRY_WAITS):
+                    wait = self.RETRY_WAITS[attempt]
+                    ra = getattr(exc, "headers", {}) or {}
+                    try:
+                        wait = max(wait, int(ra.get("Retry-After", 0)))
+                    except Exception:
+                        pass
+                    self.request_stats["reintentos"] += 1
+                    time.sleep(wait)
+                    continue
+                self.request_stats["errores"] += 1
                 raise
-            self._api().update_bearer_token(self._token(force=True))
-            return fn(self._api())
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                if attempt < len(self.RETRY_WAITS):
+                    time.sleep(self.RETRY_WAITS[attempt])
+                    continue
+                raise
+        raise RuntimeError("Garmin no respondió después de varios intentos")
+
+    def _cached(self, key, fn):
+        """Memoriza respuestas por fecha dentro de un sync (el sueño y el día piden lo mismo)."""
+        if key not in self._memo:
+            self._memo[key] = fn()
+        return self._memo[key]
 
     def close(self):
         if self._client:
@@ -310,7 +351,7 @@ class ApexGarminClient:
 
     # ── día ──────────────────────────────────────────────────────────────────
     def get_daily_summary_v2(self, d: str | date) -> dict:
-        res = self._call(lambda c: c.get_daily_summaries(_iso(d), _iso(d))) or {}
+        res = self._cached(("v2", _iso(d)), lambda: self._call(lambda c: c.get_daily_summaries(_iso(d), _iso(d)))) or {}
         data = res.get("data") if isinstance(res, dict) else res
         return (data or [{}])[0] or {}
 
@@ -384,7 +425,7 @@ class ApexGarminClient:
         return self.get_stats(d)
 
     def get_heart_rates(self, d: str | date) -> dict:
-        return self._call(lambda c: c.get_daily_heart_rate(_iso(d))) or {}
+        return self._cached(("hr", _iso(d)), lambda: self._call(lambda c: c.get_daily_heart_rate(_iso(d))) or {})
 
     def get_rhr_day(self, d: str | date) -> dict:
         hr = self.get_heart_rates(d)
@@ -397,11 +438,12 @@ class ApexGarminClient:
         Con chunks=288 (intervalos de 5 min) trae el mínimo y máximo de cada intervalo:
         la curva completa que necesitan sleep_engine y day_engine.
         """
-        res = self._call(lambda c: c.get_daily_body_battery(_iso(start), _iso(end or start), chunks=chunks))
+        res = self._cached(("bb", _iso(start), _iso(end or start), chunks),
+                           lambda: self._call(lambda c: c.get_daily_body_battery(_iso(start), _iso(end or start), chunks=chunks)))
         return res if isinstance(res, list) else (res or {}).get("results", [res] if res else [])
 
     def get_hrv_data(self, d: str | date) -> dict:
-        return self._call(lambda c: c.get_daily_hrv(_iso(d))) or {}
+        return self._cached(("hrv", _iso(d)), lambda: self._call(lambda c: c.get_daily_hrv(_iso(d))) or {})
 
     def get_hrv_summaries(self, start, end) -> dict:
         return self._call(lambda c: c.get_daily_hrv_summaries(_iso(start), _iso(end))) or {}
