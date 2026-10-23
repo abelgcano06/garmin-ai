@@ -110,10 +110,12 @@ def apex_actividades(
     tipo: Annotated[str | None, Field(description="road_biking, mountain_biking, gravel_cycling, indoor_cycling, running…")] = None,
     etiqueta: Annotated[str | None, Field(description="Etiqueta que puso el usuario, p. ej. Intervalos")] = None,
     limite: Annotated[int, Field(ge=1, le=60)] = 20,
-) -> list:
+) -> dict:
     """Lista de actividades (más recientes primero) con distancia, tiempo, desnivel, FC, potencia,
-    NP, VI, TSS, clasificación, limitante principal y la etiqueta/RPE del usuario."""
-    return T.actividades(_uid(), desde, hasta, tipo, etiqueta, limite)
+    NP, VI, TSS, clasificación, limitante principal y la etiqueta/RPE del usuario.
+    Regresa {"total": n, "actividades": [...]}."""
+    acts = T.actividades(_uid(), desde, hasta, tipo, etiqueta, limite)
+    return {"total": len(acts), "actividades": acts}
 
 
 @mcp.tool(annotations=RO)
