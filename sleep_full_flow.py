@@ -140,7 +140,6 @@ def run_sleep_full_flow(
             print(f"[CACHE] sleep_raw.json reutilizado para {date_str}")
     else:
         raw_dump = build_sleep_raw_dump(client, date_str, user_id=user_id, verbose=verbose)
-        save_json(raw_path, raw_dump)
 
     sleep_ok = raw_dump["calls"]["get_sleep_data"]["ok"]
     stats_ok = raw_dump["calls"]["get_stats"]["ok"]
@@ -148,8 +147,18 @@ def run_sleep_full_flow(
     if not sleep_ok or not stats_ok:
         if verbose:
             print("\n[ERROR] No se pudo bajar toda la data necesaria.")
-            print("Revisa sleep_raw.json.")
         return None
+
+    # Sin noche registrada (reloj no puesto / sin sync): no inventar un score.
+    # No se guarda el raw para que el próximo sync lo vuelva a intentar.
+    _dto = ((raw_dump["calls"]["get_sleep_data"].get("data") or {}).get("dailySleepDTO") or {})
+    if not _dto.get("sleepTimeSeconds"):
+        if verbose:
+            print(f"[SIN DATOS] Garmin no registró sueño para {date_str}")
+        return None
+
+    if not os.path.exists(raw_path):
+        save_json(raw_path, raw_dump)
 
     # 2) SERIES
     series = build_sleep_series(raw_dump)

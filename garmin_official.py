@@ -140,9 +140,33 @@ def _ms(ts: Any) -> int | None:
     return None
 
 
-def _between(pairs: list, start_ms: int, end_ms: int) -> list:
-    return [p for p in pairs or [] if isinstance(p, (list, tuple)) and len(p) >= 2
-            and p[0] is not None and p[1] is not None and start_ms <= p[0] <= end_ms]
+def _num(row: Any, idx: int | None = None) -> float | None:
+    """Valor numérico de una fila [ts, valor] o [ts, "MEASURED", valor, version]."""
+    if not isinstance(row, (list, tuple)) or len(row) < 2:
+        return None
+    if idx is not None and idx < len(row) and isinstance(row[idx], (int, float)):
+        return row[idx]
+    return next((v for v in row[1:3] if isinstance(v, (int, float)) and not isinstance(v, bool)), None)
+
+
+def _between(rows: list, start_ms: int, end_ms: int, idx: int | None = None) -> list:
+    """[[ts, valor], ...] dentro de la ventana, con valor numérico."""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, (list, tuple)) or not r or not isinstance(r[0], (int, float)):
+            continue
+        v = _num(r, idx)
+        if v is not None and start_ms <= r[0] <= end_ms:
+            out.append([r[0], v])
+    return out
+
+
+def _desc_index(descriptors: list, *keys: str) -> int | None:
+    for d in descriptors or []:
+        k = (d.get("key") or d.get("bodyBatteryValueDescriptorKey") or "").lower()
+        if k in keys:
+            return d.get("index", d.get("bodyBatteryValueDescriptorIndex"))
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -321,9 +345,10 @@ class ApexGarminClient:
         if sleep_evt:
             try:
                 bbd = self.get_body_battery(d, d) or []
-                arr = (bbd[0] if bbd else {}).get("bodyBatteryValuesArray") or []
-                wake = (_ms(sleep_evt.get("eventStartTimeGmt") + "Z") or 0) + int(sleep_evt.get("durationInMilliseconds") or 0)
-                before = [p for p in arr if p[1] is not None and p[0] <= wake]
+                item = bbd[0] if bbd else {}
+                idx = _desc_index(item.get("bodyBatteryValueDescriptorDTOList"), "bodybatterylevel")
+                wake = (_ms(sleep_evt.get("eventStartTimeGmt")) or 0) + int(sleep_evt.get("durationInMilliseconds") or 0)
+                before = _between(item.get("bodyBatteryValuesArray") or [], 0, wake, idx)
                 if before:
                     stats["bodyBatteryAtWakeTime"] = before[-1][1]
             except Exception:
@@ -407,11 +432,13 @@ class ApexGarminClient:
             arr = []
             for day in (prev, _iso(d)):
                 for item in self.get_body_battery(day, day) or []:
-                    arr += item.get("bodyBatteryValuesArray") or []
+                    idx = _desc_index(item.get("bodyBatteryValueDescriptorDTOList"), "bodybatterylevel")
+                    arr += _between(item.get("bodyBatteryValuesArray") or [], s, e, idx)
                     for ev in item.get("bodyBatteryActivityEvent") or []:
                         if ev.get("eventType") == "SLEEP" and day == _iso(d):
                             out["bodyBatteryChange"] = ev.get("bodyBatteryImpact")
-            out["sleepBodyBattery"] = [{"startGMT": t, "value": v} for t, v in _between(arr, s, e)]
+            arr.sort(key=lambda p: p[0])
+            out["sleepBodyBattery"] = [{"startGMT": t, "value": v} for t, v in arr]
         except Exception:
             out["sleepBodyBattery"] = []
 
