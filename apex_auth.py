@@ -229,7 +229,7 @@ class ApexOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, Refr
         try:
             if not dev_skip:
                 from apex_tools import sincronizar
-                sincronizar(uid, email, days_back=30)
+                sincronizar(uid, email, days_back=120)  # 120 d: CTL necesita 42+ días de historia
         except Exception:
             pass
         return RedirectResponse(construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state), status_code=302)

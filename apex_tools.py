@@ -98,6 +98,29 @@ def perfil(user_id: str) -> dict:
     }
 
 
+_PROFILE_FIELDS = {
+    "nombre": "name", "peso_kg": "weight_kg", "estatura_cm": "height_cm", "edad": "age",
+    "ftp": "ftp", "fc_max": "max_hr", "horas_semana": "weekly_hours_available",
+    "objetivo": "goal_event", "fecha_objetivo": "goal_date", "anios_experiencia": "experience_years",
+}
+
+
+def actualizar_perfil(user_id: str, **cambios) -> dict:
+    """Actualiza el perfil del atleta (solo los campos que vienen con valor)."""
+    path = os.path.join(user_dir(user_id), "profile.json")
+    p = _load(path, {}) or {}
+    for k, v in cambios.items():
+        if v is None or k not in _PROFILE_FIELDS:
+            continue
+        if k == "fecha_objetivo":
+            date.fromisoformat(str(v))  # valida YYYY-MM-DD
+        p[_PROFILE_FIELDS[k]] = v
+    os.makedirs(user_dir(user_id), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(p, fh, ensure_ascii=False, indent=2)
+    return {"ok": True, "perfil": perfil(user_id)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Hoy
 # ─────────────────────────────────────────────────────────────────────────────

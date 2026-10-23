@@ -141,6 +141,26 @@ def apex_guardar_nota(
     return T.guardar_nota(_uid(), id, etiqueta, rpe, texto)
 
 
+@mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+def apex_actualizar_perfil(
+    nombre: str | None = None,
+    peso_kg: Annotated[float | None, Field(gt=30, lt=200)] = None,
+    estatura_cm: Annotated[float | None, Field(gt=100, lt=230)] = None,
+    edad: Annotated[int | None, Field(gt=10, lt=100)] = None,
+    ftp: Annotated[int | None, Field(gt=50, lt=600, description="FTP en watts si el atleta lo conoce")] = None,
+    fc_max: Annotated[int | None, Field(gt=120, lt=230)] = None,
+    horas_semana: Annotated[float | None, Field(ge=0, le=40)] = None,
+    objetivo: Annotated[str | None, Field(description="Evento objetivo, p. ej. Carrera de 100 km XC")] = None,
+    fecha_objetivo: Annotated[str | None, Field(description="YYYY-MM-DD")] = None,
+    anios_experiencia: Annotated[float | None, Field(ge=0, le=60)] = None,
+) -> dict:
+    """Actualiza el perfil del atleta (peso, FTP, FC máx, objetivo y fecha, etc.). Solo cambia lo que se manda.
+    Úsalo cuando el usuario diga sus datos; mejora W/kg, zonas y la planeación hacia su objetivo."""
+    return T.actualizar_perfil(_uid(), nombre=nombre, peso_kg=peso_kg, estatura_cm=estatura_cm, edad=edad, ftp=ftp,
+                               fc_max=fc_max, horas_semana=horas_semana, objetivo=objetivo,
+                               fecha_objetivo=fecha_objetivo, anios_experiencia=anios_experiencia)
+
+
 @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True})
 def apex_sincronizar(dias: Annotated[int, Field(ge=1, le=90)] = 7) -> dict:
     """Trae de Garmin lo nuevo (actividades de los últimos `dias`, noches y días faltantes) y recalcula
