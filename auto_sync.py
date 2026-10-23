@@ -286,7 +286,8 @@ def sync_activities(client, user_id, days_back=7, verbose=True):
     except Exception as e:
         if verbose:
             print(f"  [acts]  ERROR jalando actividades: {e}")
-        return []
+        # No lo tragamos: que el estado del sync muestre el error.
+        raise RuntimeError(f"No pude listar actividades de Garmin ({start_str} a {end_str}): {e}") from e
 
     if not activities:
         if verbose:
