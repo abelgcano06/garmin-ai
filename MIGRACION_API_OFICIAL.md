@@ -29,16 +29,24 @@ Crear la key: https://connect.garmin.com/app/settings/personalApiToken
 En la nube, en vez del archivo, define la variable
 `GARMIN_PERSONAL_API_KEY__<USER_ID>` (ej. `GARMIN_PERSONAL_API_KEY__ABELGCANOFUENTES_AT_HOTMAIL_COM`).
 
-## Diferencias de datos
+## Qué da y qué no da la API Personal (probado el 23 oct 2026)
 
-- **Actividades:** las series por segundo salen del `.FIT` original (lector oficial `garmin-fit-sdk`).
-  Trae potencia, FC, cadencia, altitud, velocidad, respiración, GPS y temperatura.
-  Stamina, grit y performance condition no vienen en el FIT y quedan vacíos.
-- **Sueño:** la API Personal no trae fases minuto a minuto ni estrés nocturno.
-  `get_sleep_data` arma la estructura con FC, HRV y Body Battery recortados a la ventana de sueño;
-  `sleep_engine` infiere las fases desde los totales (su fallback de siempre).
-- **Día:** no hay serie intradía de estrés ni respiración; `day_engine` usa los promedios del resumen diario.
-- **Workouts al reloj:** no disponible en la API Personal (requiere Training API, tier Starter/Enterprise).
+**Sí:** perfil, resumen diario v2, sueño (resumen y score), HRV con lecturas cada 5 min,
+FC intradía cada 2 min, Body Battery (con `chunks=288` → cada 5 min), estrés diario,
+pasos, hidratación, peso, SpO₂ diario, fitness age, zonas de FC, actividades,
+**detalle por segundo de cada actividad en JSON** (incluye stamina, grit, performance condition)
+y el **.FIT original** (vueltas/laps).
+
+**No (404):** fases de sueño minuto a minuto, estrés/respiración/SpO₂ intradía, training readiness,
+training status, VO2max, endurance/hill score, FTP y umbral de lactato de Garmin, récords personales,
+splits/zonas/clima/equipo por actividad, workouts al reloj.
+
+Cómo lo compensa Apex:
+- **Fases de sueño:** `sleep_engine` las infiere de los totales (su fallback de siempre).
+- **Estrés y respiración del día:** `day_engine` usa los promedios del resumen diario.
+- **Zonas por actividad:** vienen en la búsqueda de actividades (`powerTimeInZone_*`, `hrTimeInZone_*`).
+- **FTP / VO2max:** los calcula Apex (`ftp_engine`) con tus datos de potencia.
+- **Vueltas:** del .FIT.
 
 ## Multiusuario
 
