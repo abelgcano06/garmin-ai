@@ -455,4 +455,16 @@ def sincronizar(user_id: str, email: str, days_back: int = 7) -> dict:
 
 
 def estado_sync(user_id: str) -> dict:
-    return _sync_state.get(user_id) or {"estado": "sin_sync_en_esta_sesion"}
+    st = _sync_state.get(user_id)
+    if not st:
+        return {"estado": "sin_sync_en_esta_sesion"}
+    res = {}
+    for k, v in (st.get("resultados") or {}).items():
+        if isinstance(v, list):
+            res[k] = {"procesadas": len(v), "ok": sum(1 for x in v if isinstance(x, dict) and x.get("ok")),
+                      "errores": [x.get("name") for x in v if isinstance(x, dict) and not x.get("ok")][:5]}
+        elif isinstance(v, dict):
+            res[k] = {kk: vv for kk, vv in v.items() if kk in ("processed", "errors", "skipped", "error")} or {"ok": True}
+        else:
+            res[k] = v
+    return {**{k: v for k, v in st.items() if k != "resultados"}, "resultados": res}
