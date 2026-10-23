@@ -274,9 +274,34 @@ class ApexGarminClient:
                 return z.read(name)
         return raw
 
-    def get_activity_details(self, activity_id: int | str, maxchart: int | None = None, maxpoly: int | None = None) -> dict:
-        """Convierte el .FIT al formato de activity details de Connect que lee activity_pipeline."""
-        return fit_to_activity_details(self.download_activity_fit(activity_id), activity_id)
+    def get_activity_details(self, activity_id: int | str, maxchart: int = 100000, maxpoly: int = 4000) -> dict:
+        """
+        Serie completa de la actividad en el formato de Connect que lee activity_pipeline.
+        1) Endpoint JSON oficial /details (trae también stamina, grit y performance condition).
+        2) Si falla, el .FIT original convertido al mismo formato.
+        En ambos casos agrega las vueltas (laps) del .FIT cuando se puede.
+        """
+        details = None
+        try:
+            details = self._call(lambda c: c.get(
+                f"/activity-service/activity/{activity_id}/details",
+                params={"maxChartSize": maxchart, "maxPolylineSize": maxpoly}))
+        except Exception:
+            details = None
+        if not details or not details.get("activityDetailMetrics"):
+            return fit_to_activity_details(self.download_activity_fit(activity_id), activity_id)
+        details["_source"] = "details_json"
+        try:
+            fit = fit_to_activity_details(self.download_activity_fit(activity_id), activity_id)
+            details["_laps"] = fit.get("_laps", [])
+            details["_sessions"] = fit.get("_sessions", [])
+        except Exception:
+            pass
+        return details
+
+    def get_activity_laps(self, activity_id: int | str) -> list:
+        """Vueltas/laps desde el .FIT (la API Personal no expone /splits)."""
+        return fit_to_activity_details(self.download_activity_fit(activity_id), activity_id).get("_laps", [])
 
     def upload_workout(self, *a, **k):
         raise FeatureNotAvailable(
