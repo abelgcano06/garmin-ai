@@ -13,3 +13,7 @@ python-dotenv
 numpy
 pandas
 matplotlib
+# Conector MCP
+mcp>=1.12,<2
+starlette
+httpx

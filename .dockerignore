@@ -1,0 +1,10 @@
+.git
+.venv
+__pycache__
+data
+*.zip
+*.exe
+*.log
+.env
+garmin_session.json
+db_config.json

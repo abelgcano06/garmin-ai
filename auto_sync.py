@@ -13,6 +13,8 @@ Qué hace:
 El usuario nunca ve esto — solo ve "Sincronizando..." y listo.
 """
 
+import json
+
 import os
 from datetime import date, timedelta
 
@@ -26,6 +28,57 @@ from profile_intelligence import run_profile_intelligence
 # =========================================================
 # Sync sueño
 # =========================================================
+
+
+# =========================================================
+# Reproceso de días incompletos (migración a API oficial)
+# =========================================================
+
+def _load_json_safe(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _sleep_incomplete(d, user_id):
+    """Noche procesada sin datos de sueño (p. ej. con la conexión vieja ya rota)."""
+    from app_context import get_sleep_analysis_path
+    a = _load_json_safe(get_sleep_analysis_path(d, user_id))
+    return a is not None and not ((a.get("sleep_window") or {}).get("sleep_time_seconds"))
+
+
+def _day_incomplete(d, user_id):
+    from app_context import get_day_findings_path
+    f = _load_json_safe(get_day_findings_path(d, user_id))
+    return f is not None and (f.get("flags") or {}).get("data_valid") is False
+
+
+def _drop_cached(kind, d, user_id):
+    """Borra raw y análisis de un día para forzar que se vuelva a bajar de Garmin."""
+    import app_context as ac
+    paths = {
+        "sleep": [ac.get_sleep_raw_path(d, user_id), ac.get_sleep_analysis_path(d, user_id)],
+        "day": [ac.get_day_raw_path(d, user_id), ac.get_day_analysis_path(d, user_id)],
+    }[kind]
+    for p in paths:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def reprocess_recent(user_id, days=30, verbose=True):
+    """Marca para reproceso las últimas `days` noches y días (borra raw/análisis)."""
+    today = date.today()
+    for i in range(days, -1, -1):
+        d = (today - timedelta(days=i)).isoformat()
+        _drop_cached("sleep", d, user_id)
+        _drop_cached("day", d, user_id)
+    if verbose:
+        print(f"  [sync]  {days} días marcados para reproceso con la API oficial")
+
 
 def sync_sleep(client, user_id, verbose=True):
     """
@@ -60,6 +113,8 @@ def sync_sleep(client, user_id, verbose=True):
     for i in range(scan_days, -1, -1):   # scan_days atrás → hoy
         d = (today - timedelta(days=i)).isoformat()
         analysis_path = get_sleep_analysis_path(d, user_id)
+        if os.path.exists(analysis_path) and i <= 30 and _sleep_incomplete(d, user_id):
+            _drop_cached("sleep", d, user_id)   # noche vacía reciente: reintentar
         if not os.path.exists(analysis_path):
             dates_to_process.append(d)
         elif d == today_str:
@@ -148,6 +203,8 @@ def sync_day(client, user_id, verbose=True):
     dates_to_process = []
     for i in range(89, 0, -1):          # 89 días atrás → ayer
         d = (today - timedelta(days=i)).isoformat()
+        if os.path.exists(get_day_analysis_path(d, user_id)) and i <= 30 and _day_incomplete(d, user_id):
+            _drop_cached("day", d, user_id)     # día sin datos válidos reciente: reintentar
         if not os.path.exists(get_day_analysis_path(d, user_id)):
             dates_to_process.append(d)
     dates_to_process.append(today_str)  # hoy siempre al final
