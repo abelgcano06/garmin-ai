@@ -366,8 +366,13 @@ class ApexGarminClient:
         return {"restingHeartRate": hr.get("restingHeartRate"),
                 "lastSevenDaysAvgRestingHeartRate": hr.get("lastSevenDaysAvgRestingHeartRate")}
 
-    def get_body_battery(self, start: str | date, end: str | date | None = None) -> list:
-        res = self._call(lambda c: c.get_daily_body_battery(_iso(start), _iso(end or start)))
+    def get_body_battery(self, start: str | date, end: str | date | None = None, chunks: int | None = 288) -> list:
+        """
+        Sin `chunks` la API Personal solo devuelve los puntos de quiebre del día (~6).
+        Con chunks=288 (intervalos de 5 min) trae el mínimo y máximo de cada intervalo:
+        la curva completa que necesitan sleep_engine y day_engine.
+        """
+        res = self._call(lambda c: c.get_daily_body_battery(_iso(start), _iso(end or start), chunks=chunks))
         return res if isinstance(res, list) else (res or {}).get("results", [res] if res else [])
 
     def get_hrv_data(self, d: str | date) -> dict:
