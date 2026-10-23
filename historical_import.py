@@ -345,7 +345,7 @@ def run_historical_import(client, user_id=None, days_back=90, verbose=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Importa historial de 90 días para un usuario nuevo.")
     parser.add_argument("--email",    required=True,        help="Email Garmin del usuario")
-    parser.add_argument("--password", required=True,        help="Password Garmin")
+    parser.add_argument("--password", required=False,       help="(Obsoleto) ya no se usa: la API oficial usa la Personal API key")
     parser.add_argument("--days",     type=int, default=90, help="Días hacia atrás (default: 90)")
     parser.add_argument("--ftp",      type=int, default=None, help="FTP en vatios (ej: 215)")
     parser.add_argument("--max_hr",   type=int, default=None, help="Frecuencia cardiaca máxima (ej: 182)")
@@ -355,9 +355,9 @@ if __name__ == "__main__":
     ensure_current_user_profile(garmin_email=args.email, ftp=args.ftp, max_hr=args.max_hr)
     user_id = get_current_user_id()
 
-    from garminconnect import Garmin
-    client = Garmin(args.email, args.password)
+    from garmin_auth import get_garmin_client
+    client = get_garmin_client(args.email)
     client.login()
-    print(f"[OK] Login Garmin: {args.email}")
+    print(f"[OK] Garmin (API oficial): {args.email}")
 
     run_historical_import(client, user_id=user_id, days_back=args.days)

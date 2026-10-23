@@ -23,7 +23,8 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
-from garminconnect import Garmin
+from garmin_official import ApexGarminClient, FeatureNotAvailable, GarminKeyError
+from app_context import email_to_user_id
 
 try:
     import psycopg2
@@ -137,29 +138,24 @@ app.add_middleware(
 
 # ── Garmin client singleton ────────────────────────────────────────────────────
 
-_client: Garmin | None = None
+_clients: dict[str, ApexGarminClient] = {}
 
 
-def get_client() -> Garmin:
-    global _client
-    if _client is not None:
-        return _client
-
-    if not os.path.exists(TOKENSTORE) or not os.listdir(TOKENSTORE):
-        raise HTTPException(
-            status_code=503,
-            detail="Tokens no encontrados. Ejecuta garmin_save_tokens.py primero."
-        )
-
-    email = ""
-    if os.path.exists(SESSION_FILE):
+def get_client() -> ApexGarminClient:
+    """Cliente oficial (Personal API) del usuario activo: header X-Apex-Email o garmin_session.json."""
+    email = _current_garmin_email.get()
+    if not email and os.path.exists(SESSION_FILE):
         with open(SESSION_FILE, encoding="utf-8") as f:
             email = json.load(f).get("email", "")
-
-    client = Garmin(email)
-    client.login(tokenstore=TOKENSTORE)
-    _client = client
-    return _client
+    email = (email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=503, detail="Sin sesión activa")
+    if email not in _clients:
+        try:
+            _clients[email] = ApexGarminClient.for_user(email_to_user_id(email))
+        except GarminKeyError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    return _clients[email]
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -268,6 +264,8 @@ def send_workout(req: SendWorkoutRequest):
     # Upload workout
     try:
         result = client.upload_workout(workout_json)
+    except FeatureNotAvailable as e:
+        raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error subiendo workout: {e}")
 
@@ -308,6 +306,7 @@ def send_workout(req: SendWorkoutRequest):
 
 @app.delete("/workout/{workout_id}")
 def delete_workout(workout_id: int):
+    raise HTTPException(status_code=501, detail="La API Personal de Garmin no permite borrar workouts; requiere el Training API.")
     client = get_client()
     try:
         client.garth.delete(

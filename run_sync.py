@@ -125,11 +125,11 @@ def main():
         sys.exit(1)
 
     email = session.get("email", "").strip()
-    password = session.get("password", "").strip()
+    api_key = (session.get("api_key") or "").strip() or None
 
-    if not email or not password:
-        write_status({"status": "error", "message": "Credenciales incompletas en sesion.json."})
-        print(json.dumps({"ok": False, "error": "Missing credentials"}))
+    if not email:
+        write_status({"status": "error", "message": "Falta el correo de Garmin en session.json."})
+        print(json.dumps({"ok": False, "error": "Missing email"}))
         sys.exit(1)
 
     write_status({
@@ -140,9 +140,9 @@ def main():
 
     # 2) Login Garmin
     print("  [sync]  Conectando con Garmin...")
-    client = login_garmin(email, password)
+    client = login_garmin(email, api_key=api_key)
     if not client:
-        write_status({"status": "error", "message": "No se pudo conectar con Garmin. Verifica tus credenciales."})
+        write_status({"status": "error", "message": "No se pudo conectar con Garmin. Revisa tu Personal API key (connect.garmin.com/app/settings/personalApiToken)."})
         print(json.dumps({"ok": False, "error": "Garmin login failed"}))
         sys.exit(1)
 
