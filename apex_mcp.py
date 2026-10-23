@@ -173,6 +173,13 @@ def apex_sincronizar(dias: Annotated[int, Field(ge=1, le=90)] = 7) -> dict:
 
 
 @mcp.tool(annotations=RO)
+def apex_cobertura() -> dict:
+    """Cuántas noches, días y actividades tiene Apex del usuario, desde cuándo, qué falta en los
+    últimos 30 días, qué le falta al perfil y cuándo fue el último sync."""
+    return T.cobertura(_uid())
+
+
+@mcp.tool(annotations=RO)
 def apex_estado_sync() -> dict:
     """Avance del último sync con Garmin."""
     return T.estado_sync(_uid())

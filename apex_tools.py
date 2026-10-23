@@ -406,6 +406,51 @@ def tendencias(user_id: str, dias: int = 30) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Cobertura de datos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cobertura(user_id: str) -> dict:
+    """Cuántos días tiene Apex de cada cosa, desde cuándo, y qué falta en los últimos 30 días."""
+    today = date.today()
+    last30 = {(today - timedelta(days=i)).isoformat() for i in range(30)}
+
+    sleep_ok = []
+    for d in _dated_dirs(user_id, "sleep"):
+        if _has_sleep(_load(os.path.join(user_dir(user_id), "sleep", d, "sleep_analysis.json"))):
+            sleep_ok.append(d)
+    day_ok = []
+    for d in _dated_dirs(user_id, "day"):
+        f = _load(os.path.join(user_dir(user_id), "day", d, "day_findings.json"), {}) or {}
+        a = os.path.exists(os.path.join(user_dir(user_id), "day", d, "day_analysis.json"))
+        if a and (f.get("flags") or {}).get("data_valid") is not False:
+            day_ok.append(d)
+    acts = _activities(user_id)
+    act_dates = sorted({(a.get("date") or "")[:10] for a in acts if a.get("date")})
+    hist = _pi(user_id, "readiness_history.json", []) or []
+    prof = perfil(user_id)
+    falta_perfil = [k for k in ("peso_kg", "ftp_declarado", "fc_max", "objetivo", "fecha_objetivo") if not prof.get(k)]
+    st = _sync_state.get(user_id) or {}
+
+    def rng(xs):
+        return {"desde": xs[0], "hasta": xs[-1]} if xs else None
+
+    return {
+        "noches": {"con_datos": len(sleep_ok), **(rng(sleep_ok) or {}),
+                   "ultimos_30": len(last30 & set(sleep_ok)),
+                   "faltan_ultimos_30": sorted(last30 - set(sleep_ok))},
+        "dias": {"con_datos": len(day_ok), **(rng(day_ok) or {}),
+                 "ultimos_30": len(last30 & set(day_ok)),
+                 "faltan_ultimos_30": sorted(last30 - set(day_ok))},
+        "actividades": {"total": len(acts), **(rng(act_dates) or {}),
+                        "ultimos_30": sum(1 for a in acts if (a.get("date") or "")[:10] in last30)},
+        "readiness": {"dias": len(hist), **(rng([h.get("calendar_date") for h in hist if h.get("calendar_date")]) or {})},
+        "perfil_incompleto": falta_perfil,
+        "ultimo_sync": {"estado": st.get("estado"), "inicio": st.get("inicio"), "termino": st.get("termino")} if st else None,
+        "nota": "Una noche falta si no usaste el reloj al dormir o no se sincronizó con Garmin Connect.",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Sync
 # ─────────────────────────────────────────────────────────────────────────────
 
